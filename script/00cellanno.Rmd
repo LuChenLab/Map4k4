@@ -1,0 +1,756 @@
+---
+title: "Map4k4 CKO and control single cell merge and annotation"
+author: "zhangdan"
+date: "2022/7/12"
+output: 
+  html_document: 
+    toc: true
+    toc_depth: 4
+    toc_float: 
+      collapsed: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = 'center')
+```
+
+```{r, message=FALSE}
+library("Seurat")
+library("openxlsx")
+library("ggplot2")
+library("Matrix")
+library("dplyr")
+library("patchwork")
+library("ggrepel")
+library("Hmisc")
+library("future")
+library("ggpubr")
+library("DoubletFinder")
+```
+
+# Setup the Seurat Object
+## CKO rep1
+```{r,warning=FALSE, message=FALSE}
+sc_path <- "/mnt/raid66/Personal_data/zhangdan/MAP4K4/00download/"
+tissue_folder <- "Map4k4_CKO1_rep1"
+raw.data <- Read10X(data.dir = paste0(sc_path, tissue_folder,"/filtered_feature_bc_matrix/"))
+
+# create seuratobj
+tissue <- CreateSeuratObject(counts = raw.data, project = "Map4k4_CKO1_rep1")
+tissue@meta.data
+
+# Add information
+tissue[["percent.mt"]] <- PercentageFeatureSet(tissue, pattern = "^mt-")
+tissue[["percent.ribo"]] <- PercentageFeatureSet(tissue, pattern = "^Rp[sl][[:digit:]]")
+tissue[["Tissue"]] <- "Bone Marrow"
+tissue[["State"]] <- "Map4k4_CKO1_rep1"
+tissue[["Stage"]] <- "W12"
+
+tissue <- NormalizeData(tissue, normalization.method = "LogNormalize", scale.factor = 10000, verbose = F)
+tissue <- FindVariableFeatures(tissue, selection.method = "vst", nfeatures = 2000, verbose = F)
+tissue <- ScaleData(tissue, verbose = F)
+tissue <- RunPCA(tissue, features = VariableFeatures(tissue), verbose = F)
+pc.num=1:15
+tissue <- RunUMAP(tissue, dims=pc.num)
+tissue <- FindNeighbors(tissue, dims = pc.num) %>% FindClusters(resolution = 0.3)
+
+# DoubletFinder
+## 寻找最优pK值
+sweep.res.list <- paramSweep_v3(tissue, PCs = pc.num, sct = T)
+sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)  
+bcmvn <- find.pK(sweep.stats)
+pK_bcmvn <- bcmvn$pK[which.max(bcmvn$BCmetric)] %>% as.character() %>% as.numeric()
+
+## 排除不能检出的同源doublets，优化期望的doublets数量
+DoubletRate = 0.075                     # 5000细胞对应的doublets rate是3.9%
+homotypic.prop <- modelHomotypic(tissue$seurat_clusters)   # 最好提供celltype
+nExp_poi <- round(DoubletRate*ncol(tissue)) 
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+
+## 使用确定好的参数鉴定doublets
+tissue <- doubletFinder_v3(tissue, PCs = pc.num, pN = 0.25, pK = pK_bcmvn, 
+                         nExp = nExp_poi.adj, reuse.pANN = F, sct = T)
+
+tissue$DF.classifications_0.25_0.05_832
+DimPlot(tissue, reduction = "umap", group.by = "DF.classifications_0.25_0.05_832")
+
+# change name
+Map4k4_CKO1_rep1 <- tissue
+Map4k4_CKO1_rep1$orig.ident <- "Map4k4_CKO1_rep1"
+colnames(Map4k4_CKO1_rep1@meta.data)[ncol(Map4k4_CKO1_rep1@meta.data)] <- "DoubleFinder"
+Map4k4_CKO1_rep1@meta.data$RNA_snn_res.0.3 <- NULL
+Map4k4_CKO1_rep1@meta.data$seurat_clusters <- NULL
+Map4k4_CKO1_rep1@meta.data$pANN_0.25_0.05_832 <- NULL
+```
+
+## CKO rep2
+```{r,warning=FALSE, message=FALSE}
+sc_path <- "/mnt/raid66/Personal_data/zhangdan/MAP4K4/00download/"
+tissue_folder <- "Map4k4_CKO1_rep2"
+raw.data <- Read10X(data.dir = paste0(sc_path, tissue_folder,"/filtered_feature_bc_matrix/"))
+
+# create seuratobj
+tissue <- CreateSeuratObject(counts = raw.data, project = "Map4k4_CKO1_rep2")
+tissue@meta.data
+
+# Add information
+tissue[["percent.mt"]] <- PercentageFeatureSet(tissue, pattern = "^mt-")
+tissue[["percent.ribo"]] <- PercentageFeatureSet(tissue, pattern = "^Rp[sl][[:digit:]]")
+tissue[["Tissue"]] <- "Bone Marrow"
+tissue[["State"]] <- "Map4k4_CKO1_rep2"
+tissue[["Stage"]] <- "W12"
+
+tissue <- NormalizeData(tissue, normalization.method = "LogNormalize", scale.factor = 10000, verbose = F)
+tissue <- FindVariableFeatures(tissue, selection.method = "vst", nfeatures = 2000, verbose = F)
+tissue <- ScaleData(tissue, verbose = F)
+tissue <- RunPCA(tissue, features = VariableFeatures(tissue), verbose = F)
+pc.num=1:15
+tissue <- RunUMAP(tissue, dims=pc.num)
+tissue <- FindNeighbors(tissue, dims = pc.num) %>% FindClusters(resolution = 0.3)
+
+# DoubletFinder
+## 寻找最优pK值
+sweep.res.list <- paramSweep_v3(tissue, PCs = pc.num, sct = T)
+sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)  
+bcmvn <- find.pK(sweep.stats)
+pK_bcmvn <- bcmvn$pK[which.max(bcmvn$BCmetric)] %>% as.character() %>% as.numeric()
+
+## 排除不能检出的同源doublets，优化期望的doublets数量
+DoubletRate = 0.075                     # 5000细胞对应的doublets rate是3.9%
+homotypic.prop <- modelHomotypic(tissue$seurat_clusters)   # 最好提供celltype
+nExp_poi <- round(DoubletRate*ncol(tissue)) 
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+
+## 使用确定好的参数鉴定doublets
+tissue <- doubletFinder_v3(tissue, PCs = pc.num, pN = 0.25, pK = pK_bcmvn, 
+                         nExp = nExp_poi.adj, reuse.pANN = F, sct = T)
+
+DimPlot(tissue, reduction = "umap", group.by = "DF.classifications_0.25_0.12_517")
+
+# change name
+Map4k4_CKO1_rep2 <- tissue
+Map4k4_CKO1_rep2$orig.ident <- "Map4k4_CKO1_rep2"
+colnames(Map4k4_CKO1_rep2@meta.data)[ncol(Map4k4_CKO1_rep2@meta.data)] <- "DoubleFinder"
+Map4k4_CKO1_rep2@meta.data$RNA_snn_res.0.3 <- NULL
+Map4k4_CKO1_rep2@meta.data$seurat_clusters <- NULL
+Map4k4_CKO1_rep2@meta.data$pANN_0.25_0.12_517 <- NULL
+```
+
+## Ctrl rep1
+```{r,warning=FALSE, message=FALSE}
+sc_path <- "/mnt/raid66/Personal_data/zhangdan/MAP4K4/00download/"
+tissue_folder <- "Map4k4_Control_rep1"
+raw.data <- Read10X(data.dir = paste0(sc_path, tissue_folder,"/filtered_feature_bc_matrix/"))
+
+# create seuratobj
+tissue <- CreateSeuratObject(counts = raw.data, project = "Map4k4_Control_rep1")
+tissue@meta.data
+
+# Add information
+tissue[["percent.mt"]] <- PercentageFeatureSet(tissue, pattern = "^mt-")
+tissue[["percent.ribo"]] <- PercentageFeatureSet(tissue, pattern = "^Rp[sl][[:digit:]]")
+tissue[["Tissue"]] <- "Bone Marrow"
+tissue[["State"]] <- "Map4k4_Control_rep1"
+tissue[["Stage"]] <- "W12"
+
+tissue <- NormalizeData(tissue, normalization.method = "LogNormalize", scale.factor = 10000, verbose = F)
+tissue <- FindVariableFeatures(tissue, selection.method = "vst", nfeatures = 2000, verbose = F)
+tissue <- ScaleData(tissue, verbose = F)
+tissue <- RunPCA(tissue, features = VariableFeatures(tissue), verbose = F)
+pc.num=1:15
+tissue <- RunUMAP(tissue, dims=pc.num)
+tissue <- FindNeighbors(tissue, dims = pc.num) %>% FindClusters(resolution = 0.3)
+
+# DoubletFinder
+## 寻找最优pK值
+sweep.res.list <- paramSweep_v3(tissue, PCs = pc.num, sct = T)
+sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)  
+bcmvn <- find.pK(sweep.stats)
+pK_bcmvn <- bcmvn$pK[which.max(bcmvn$BCmetric)] %>% as.character() %>% as.numeric()
+
+## 排除不能检出的同源doublets，优化期望的doublets数量
+DoubletRate = 0.075                     # 5000细胞对应的doublets rate是3.9%
+homotypic.prop <- modelHomotypic(tissue$seurat_clusters)   # 最好提供celltype
+nExp_poi <- round(DoubletRate*ncol(tissue)) 
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+
+## 使用确定好的参数鉴定doublets
+tissue <- doubletFinder_v3(tissue, PCs = pc.num, pN = 0.25, pK = pK_bcmvn, 
+                         nExp = nExp_poi.adj, reuse.pANN = F, sct = T)
+
+DimPlot(tissue, reduction = "umap", group.by = "DF.classifications_0.25_0.23_542")
+
+# change name
+Map4k4_Control_rep1 <- tissue
+Map4k4_Control_rep1$orig.ident <- "Map4k4_Control_rep1"
+colnames(Map4k4_Control_rep1@meta.data)[ncol(Map4k4_Control_rep1@meta.data)] <- "DoubleFinder"
+Map4k4_Control_rep1@meta.data$RNA_snn_res.0.3 <- NULL
+Map4k4_Control_rep1@meta.data$seurat_clusters <- NULL
+Map4k4_Control_rep1@meta.data$pANN_0.25_0.23_542 <- NULL
+```
+
+
+## Ctrl rep2
+```{r,warning=FALSE, message=FALSE}
+sc_path <- "/mnt/raid66/Personal_data/zhangdan/MAP4K4/00download/"
+tissue_folder <- "Map4k4_Control_rep2"
+raw.data <- Read10X(data.dir = paste0(sc_path, tissue_folder,"/filtered_feature_bc_matrix/"))
+
+# create seuratobj
+tissue <- CreateSeuratObject(counts = raw.data, project = "Map4k4_Control_rep2")
+tissue@meta.data
+
+# Add information
+tissue[["percent.mt"]] <- PercentageFeatureSet(tissue, pattern = "^mt-")
+tissue[["percent.ribo"]] <- PercentageFeatureSet(tissue, pattern = "^Rp[sl][[:digit:]]")
+tissue[["Tissue"]] <- "Bone Marrow"
+tissue[["State"]] <- "Map4k4_Control_rep2"
+tissue[["Stage"]] <- "W12"
+
+tissue <- NormalizeData(tissue, normalization.method = "LogNormalize", scale.factor = 10000, verbose = F)
+tissue <- FindVariableFeatures(tissue, selection.method = "vst", nfeatures = 2000, verbose = F)
+tissue <- ScaleData(tissue, verbose = F)
+tissue <- RunPCA(tissue, features = VariableFeatures(tissue), verbose = F)
+pc.num=1:15
+tissue <- RunUMAP(tissue, dims=pc.num)
+tissue <- FindNeighbors(tissue, dims = pc.num) %>% FindClusters(resolution = 0.3)
+
+# DoubletFinder
+## 寻找最优pK值
+sweep.res.list <- paramSweep_v3(tissue, PCs = pc.num, sct = T)
+sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)  
+bcmvn <- find.pK(sweep.stats)
+pK_bcmvn <- bcmvn$pK[which.max(bcmvn$BCmetric)] %>% as.character() %>% as.numeric()
+
+## 排除不能检出的同源doublets，优化期望的doublets数量
+DoubletRate = 0.075                     # 5000细胞对应的doublets rate是3.9%
+homotypic.prop <- modelHomotypic(tissue$seurat_clusters)   # 最好提供celltype
+nExp_poi <- round(DoubletRate*ncol(tissue)) 
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+
+## 使用确定好的参数鉴定doublets
+tissue <- doubletFinder_v3(tissue, PCs = pc.num, pN = 0.25, pK = pK_bcmvn, 
+                         nExp = nExp_poi.adj, reuse.pANN = F, sct = T)
+
+DimPlot(tissue, reduction = "umap", group.by = "DF.classifications_0.25_0.001_700")
+
+# change name
+Map4k4_Control_rep2 <- tissue
+Map4k4_Control_rep2$orig.ident <- "Map4k4_Control_rep2"
+colnames(Map4k4_Control_rep2@meta.data)[ncol(Map4k4_Control_rep2@meta.data)] <- "DoubleFinder"
+Map4k4_Control_rep2@meta.data$RNA_snn_res.0.3 <- NULL
+Map4k4_Control_rep2@meta.data$seurat_clusters <- NULL
+Map4k4_Control_rep2@meta.data$pANN_0.25_0.001_700 <- NULL
+```
+
+
+# Perform integration using reciprocal PCA (RPCA)
+```{r,warning=FALSE, message=FALSE}
+plan("multiprocess", workers = 4)
+options(future.globals.maxSize = 5000 * 1024^2)
+features <- SelectIntegrationFeatures(object.list = list(Map4k4_CKO1_rep1, Map4k4_CKO1_rep2, Map4k4_Control_rep1, Map4k4_Control_rep2))
+tiss.anchors <- FindIntegrationAnchors(object.list = list(Map4k4_CKO1_rep1, Map4k4_CKO1_rep2, Map4k4_Control_rep1, Map4k4_Control_rep2),
+                                       anchor.features = features, reduction = "rpca", verbose = F)
+tiss <- IntegrateData(anchorset = tiss.anchors, verbose = F)
+tiss@meta.data$group <- gsub("_rep1", "", tiss@meta.data$State)
+tiss@meta.data$group <- gsub("_rep2", "", tiss@meta.data$group)
+tiss@meta.data$group <- plyr::mapvalues(from = c("Map4k4_Control", "Map4k4_CKO1"), 
+                                        to = c("Control", "Map4k4_cKO"),
+                                        x = tiss@meta.data$group)
+```
+
+# Standard pre-processing workflow
+## Visualize QC metrics as a violin plot
+```{r, fig.height=5,fig.width=10,warning=FALSE}
+VlnPlot(tiss, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.ribo"), ncol = 4)
+```
+
+## Filter 
+```{r,warning=FALSE}
+dim(tiss)
+tiss <- subset(tiss, subset = nFeature_RNA > 200 & nFeature_RNA < 9000 & percent.mt < 30)
+dim(tiss)
+```
+
+## Assign Cell-Cycle Scores
+```{r,warning=FALSE}
+s.genes <- c(tolower(cc.genes$s.genes) %>% capitalize(),"Cenpu")
+g2m.genes <- tolower(cc.genes$g2m.genes) %>% capitalize()
+
+tiss <- CellCycleScoring(tiss, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+tiss$CC.Difference <- tiss$S.Score - tiss$G2M.Score
+```
+
+```{r}
+tiss@meta.data
+```
+
+
+## Scaling the data
+```{r}
+DefaultAssay(tiss) <- "integrated"
+tiss <- ScaleData(tiss, verbose = FALSE, vars.to.regress = c("S.Score", "G2M.Score"))
+#耗时较长
+```
+
+## Perform linear dimensional reduction
+```{r}
+tiss <- RunPCA(tiss, features = VariableFeatures(tiss), verbose = F)
+```
+
+## Determine the 'dimensionality' of the dataset
+```{r}
+ElbowPlot(tiss)
+```
+
+# Cluster the cells
+```{r}
+n.pcs <- 12
+res.used <- 1
+
+tiss <- FindNeighbors(tiss, dims = 1:n.pcs, verbose = F)
+tiss <- FindClusters(tiss, resolution = res.used, verbose = F)
+```
+
+## Run non-linear dimensional reduction (UMAP/tSNE)
+```{r,fig.height=5, fig.width=12}
+tiss <- RunUMAP(tiss, dims = 1:n.pcs, reduction = "pca", verbose = F)
+tiss <- RunTSNE(tiss, dims = 1:n.pcs, reduction = "pca", verbose = F)
+
+p1 <- DimPlot(tiss, reduction = "umap", label = T, repel = T)+
+  ggtitle("UMAP") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- DimPlot(tiss, reduction = "tsne", label = T, repel = T)+
+  ggtitle("TSNE") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p1 + p2
+```
+
+```{r,fig.height=10, fig.width=12}
+p1 <- DimPlot(tiss, reduction = "umap", group.by = "group", label = F, repel = T)+
+  ggtitle("Treat") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- DimPlot(tiss, reduction = "tsne", group.by = "group", label = T, repel = T)+
+  ggtitle("TSNE") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- DimPlot(tiss, reduction = "umap", group.by = "seurat_clusters", label = T, repel = T)+
+  ggtitle("UMAP") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p4 <- DimPlot(tiss, reduction = "umap", group.by = "DoubleFinder", label = F, repel = T)+
+  ggtitle("Doublet") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p5 <- DimPlot(tiss, reduction = "umap", group.by = "Phase", label = F, repel = T)+
+  ggtitle("Phase") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p1 + p3 + p4 + p5
+ggsave(p1 + p3 + p4 + p5, file = "/mnt/raid66/Personal_data/zhangdan/MAP4K4/01cellanno/analysis/UMAP_batch_Doublet_V2.pdf", width = 12, height = 10)
+```
+
+# Label clusters using marker genes
+```{r fig.height = 8, fig.width = 8}
+DefaultAssay(tiss) <- "RNA"
+p5 = FeaturePlot(tiss, features = c('nCount_RNA', 'nFeature_RNA', 'percent.mt',"percent.ribo"), ncol = 2, cols = c("grey", "red"))
+p5
+ggsave(p5, file = "/mnt/raid66/Personal_data/zhangdan/MAP4K4/01cellanno/analysis/nCount_nFeature_mt_ribo_V2.pdf", width = 16, height = 4)
+```
+
+
+```{r, fig.width=8, fig.height=9}
+p5 + p1 + p4
+ggsave(p5 + p1 + p4, file = "/mnt/raid66/Personal_data/zhangdan/MAP4K4/01cellanno/analysis/singlecell_QC.pdf", 
+       width = 8, height = 9)
+```
+
+
+# Cell maker expression
+## HSC/MPP
+```{r fig.height=7, fig.width=16}
+FeaturePlot(tiss, c("Hlf","Hoxa9","Flt3","Gpr171","Gm5111","Adgrl4","Gm19590","Cd34"),cols = c("grey", "red"),ncol = 4)
+```
+
+## MEP/Pro_erythroblast/Erythroblast
+```{r fig.height=10, fig.width=16}
+# MEP: Kit+, Klf1+, Ermap+, Gata1+, Car1+, Gypa-, Hba-a2-, Hba-a1-
+# Pro_erythroblast: Kit-, Klf1+, Ermap+, Gata1+, Car1+, Gypa+, Hba-a2+, Hba-a1+, Bpgm-, Slfn14-, Tmcc2-
+# Erythroblast: Gypa-, Hba-a2+, Hba-a1+, Bpgm+, Slfn14+, Tmcc2+
+
+FeaturePlot(tiss, c("Kit", "Klf1", "Ermap", "Gata1", "Car1", "Gypa", "Hba-a2", "Hba-a1", "Bpgm", "Slfn14", "Tmcc2"),cols = c("grey", "red"),ncol = 4) 
+```
+
+## Pro_megakaryocyte
+```{r fig.height=4, fig.width=16}
+FeaturePlot(tiss,  c("Rab27b","Cavin2","Pf4","Pbx1"),cols = c("grey", "red"),ncol = 4)
+```
+
+## GMP
+```{r fig.height=4, fig.width=16}
+FeaturePlot(tiss, c("Elane","Prtn3","Mpo"),cols = c("grey", "red"),ncol = 4)
+```
+
+## Pro_neutrophil/Neutrophil
+```{r fig.height=7, fig.width=16}
+# Pro_neutrophil: Ltf+, Ngp+,Lcn2+, Mki67+,Stmn1+, Mmp8-,Mmp9-,Cxcr2-
+# Neutrophil: Ltf+, Ngp+,Lcn2+, Mki67-,Stmn1-, Mmp8+,Mmp9+,Cxcr2+
+
+FeaturePlot(tiss, c("Ltf","Ngp","Lcn2","Mki67","Stmn1","Mmp8","Mmp9","Cxcr2"),cols = c("grey", "red"),ncol = 4)
+```
+
+## Pro_monocyte/Monocyte
+```{r fig.height=7, fig.width=16}
+# Pro_monocyte: F13a1+, Ms4a6c+,Tgfbi+, Mki67+,Stmn1+, Adgre1-
+# Monocyte: F13a1+, Ms4a6c+,Tgfbi+, Mki67-,Stmn1-, Adgre1+
+
+FeaturePlot(tiss, c("F13a1","Ms4a6c","Tgfbi","Mki67","Stmn1","Adgre1"),cols = c("grey", "red"),ncol = 4)
+```
+
+# Macrophage
+```{r fig.height=4, fig.width=16}
+FeaturePlot(tiss, c("C1qa","C1qb","C1qc"),cols = c("grey", "red"),ncol = 4)
+```
+
+# Macroglial
+```{r fig.height=4, fig.width=16}
+FeaturePlot(tiss, c("Lrmda", "Runx1"),cols = c("grey", "red"),ncol = 4)
+```
+
+
+## Basophil/Eosinophil
+```{r fig.height=4, fig.width=16}
+# Basophil: Ms4a2+, Csrp3+
+# Eosinophil: Prg2+, Prg3+
+
+FeaturePlot(tiss, c("Ms4a2", "Csrp3","Prg2","Prg3"),cols = c("grey", "red"),ncol = 4)
+```
+
+## Pro_B/B_cell
+```{r fig.height=7, fig.width=16}
+# Pro_B: Dntt+/-, Vpreb1+, Cd79a+, Cd79b+, Cd19+, Ms4a1-, Cd22-
+# B_cell: Cd79a+, Cd79b+, Cd19 +, Ms4a1+, Cd22+
+
+FeaturePlot(tiss, c("Dntt","Vpreb1","Cd79a","Cd79b","Cd19","Ms4a1","Cd22"),cols = c("grey", "red"),ncol = 4)
+```
+
+## T cell
+```{r fig.height=4, fig.width=16}
+FeaturePlot(tiss, c("Trbc2","Cd3e","Cd3g"),cols = c("grey", "red"),ncol = 4) 
+```
+
+## NK
+```{r fig.height=4, fig.width=16}
+FeaturePlot(tiss, c("Klra4","Ncr1","Klrc2"),cols = c("grey", "red"), ncol = 4) 
+```
+
+## cDC
+```{r, fig.height=4, fig.width=16}
+FeaturePlot(tiss, c("Cd74", "H2-Aa", "H2-Eb1"),cols = c("grey", "red"),ncol = 4) 
+```
+
+## pDC
+```{r, fig.height=4, fig.width=16}
+FeaturePlot(tiss, c("Ccr9","Siglech","Ctsl"),cols = c("grey", "red"),ncol = 4) 
+```
+# CLP
+```{r, fig.height=8, fig.width=16}
+FeaturePlot(tiss, c("Vpreb3","Vpreb1","Ighm","Cd79a","Dntt","Igll1","Ebf1"),cols = c("grey", "red"),ncol = 4) 
+```
+
+
+
+## Dotplot
+```{r}
+my_dotplot <- function(celltype, seurat_obj, cluster_fac) {
+  require(data.table)
+  require(plyr)
+  require(forcats)
+  
+  res <-
+    data.frame(gene = unlist(celltype),
+               celltype = rep(names(celltype), mapply(length, celltype)))
+  res <- res[!duplicated(res$gene),]
+  
+  
+  DotPlot(seurat_obj, features = unique(unlist(celltype))) -> p_dot
+  p_dot$data$CellType <- rep(res$celltype,length(unique(p_dot$data$id)))
+  #p_dot$data$CellType <- factor(p_dot$data$CellType, levels = unique(fct_inorder(p_dot$data$CellType)))
+  
+  cluster_dotplot <- p_dot$data %>% mutate(CellType = factor(CellType, levels = unique(fct_inorder(CellType))))
+  cluster_dotplot$id <- factor(cluster_dotplot$id,levels = fct_inorder(cluster_fac))
+  cluster_dotplot[order(cluster_dotplot$id),]
+
+  p <-
+    ggplot(cluster_dotplot,
+           aes(id, features.plot, size = pct.exp, colour = avg.exp.scaled)) +
+    geom_point() +
+    theme_bw() +
+    theme(
+      axis.title = element_blank(),
+      axis.text.y = element_text(size = 12),
+      axis.text.x = element_text(
+        size = 12,
+        angle = 90 ,
+        hjust = 1,
+        vjust = 0.5
+      ),
+      panel.grid = element_blank()
+    ) +
+    scale_colour_viridis_c(direction = -1) +
+    facet_grid(CellType ~ . , scales = "free", space = "free") +
+    theme(strip.text.y = element_text(angle = 0))
+  p
+  
+}
+```
+
+
+```{r}
+HSPC_genes <- c("Kit", "Mki67","Stmn1")
+HSC_MPP_genes <- c("Hlf","Hoxa9","Flt3","Gpr171","Adgrl4","Cd34", "Runx2", "Tcf4")
+MEP_genes<- c("Klf1", "Ermap", "Gata1", "Car1")
+Pro_erythroblast <- c("Hba-a2", "Hba-a1", "Gypa")
+Erythroblast <- c("Bpgm")
+Pro_megakaryocyte <- c("Rab27b","Cavin2","Pf4")
+GMP_genes <- c("Elane","Prtn3","Mpo")
+Pro_neutrophil <- c("Ltf","Ngp","Lcn2")
+Neutrophil <- c("Mmp8","Mmp9","Cxcr2")
+Pro_monocyte <- c("F13a1","Ms4a6c","Tgfbi")
+Monocyte <- c("Adgre1")
+Macrophage <- c("C1qa","C1qb","C1qc")
+Basophil <- c("Ms4a2", "Csrp3")
+Eosinophil <- c("Prg2","Prg3")
+Pro_B <- c("Cd79a","Cd79b","Cd19","Pax5","Dntt","Vpreb1")
+B_cell <- c("Ms4a1","Cd22")
+T_cell <- c("Trbc2","Cd3e","Cd3g")
+NK <- c("Klra4","Ncr1","Klrc2")
+cDC <- c("Cd74", "H2-Aa", "H2-Eb1")
+pDC <- c("Ccr9","Siglech","Ctsl")
+Microglial <- c("Lrmda", "Runx1")
+```
+
+```{r}
+genes_all = list(HSPC = HSPC_genes,
+                 `HSC/MPP` = HSC_MPP_genes,
+                 MEP = MEP_genes,
+                 Pro_erythroblast = Pro_erythroblast,
+                 Erythroblast = Erythroblast,
+                 Pro_megakaryocyte = Pro_megakaryocyte,
+
+                 GMP = GMP_genes,
+                 Pro_neutrophil = Pro_neutrophil,
+                 Neutrophil = Neutrophil,
+                 Pro_monocyte = Pro_monocyte,
+                 Monocyte = Monocyte,
+                 Macrophage = Macrophage,
+                 Microglial = Microglial,
+                 Basophil = Basophil,
+                 Eosinophil = Eosinophil,
+                 
+                 Pro_B = Pro_B,
+                 B_cell = B_cell,
+                 T_cell = T_cell,
+                 NK = NK,
+                 cDC = cDC,
+                 pDC = pDC
+                 )
+```
+
+```{r,fig.height=12,fig.width=10, message=F}
+cluster_fac <- names(table(Idents(tiss)))
+my_dotplot(celltype = genes_all, seurat_obj = tiss, cluster_fac)
+```
+
+# Marker gene
+```{r}
+DefaultAssay(tiss) <- "RNA"
+Idents(tiss) <- tiss$seurat_clusters
+
+tiss.markers <- FindAllMarkers(tiss, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+tiss.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+saveRDS(tiss.markers, file = "/mnt/raid66/Personal_data/zhangdan/MAP4K4/01cellanno/data/markergene.rds")
+
+
+nk.markers.0 <- FindConservedMarkers(tiss, ident.1 = 0, grouping.var = "group", verbose = FALSE)
+nk.markers.0 <- nk.markers.0[order(nk.markers.0$Control_avg_log2FC, nk.markers.0$Map4k4_cKO_p_val_adj, decreasing = TRUE),]
+nk.markers.2 <- FindConservedMarkers(tiss, ident.1 = 2, grouping.var = "group", verbose = FALSE)
+nk.markers.2 <- nk.markers.2[order(nk.markers.2$Control_avg_log2FC, nk.markers.2$Map4k4_cKO_p_val_adj, decreasing = TRUE),]
+
+```
+
+
+# Cell annotaion
+```{r}
+tiss@meta.data$CellType <-
+  plyr::mapvalues(
+    from = c(31, 22, 20, 23, 28, 33, 26, 21, 10, 29, 1, 3, 6, 4, 5, 2, 7, 11, 18, 8,0, 9 ,14, 16, 27, 17, 24, 15, 30, 12, 32, 13, 25),
+    to = c(
+      rep("cDc", 1),
+      rep("NK/T", 1),
+      rep("B",1),
+      rep("Pro_B", 3),
+      rep("Eosinophil", 1),
+      rep("Macrophage", 1),
+      rep("Pro_mon", 2),
+      rep("Neutrophil", 3),
+      rep("Pro_neu", 6),
+      rep("GMP", 5),
+      rep("Pro_ery", 1),
+      rep("MEP", 4),
+      rep("HSC/MPP", 2),
+      rep("HSPC", 1),
+      rep("Microglial", 1)),
+    x = tiss@meta.data$seurat_clusters
+  )
+
+saveRDS(tiss, file = "/mnt/raid66/Personal_data/zhangdan/MAP4K4/01cellanno/data/Map4k4_seuratobj.rds")
+
+tiss$CellBarcode <- rownames(tiss@meta.data)
+write.table(tiss@meta.data, file = "/mnt/raid66/Personal_data/zhangdan/MAP4K4/01cellanno/data/Map4k4_seurat_meta.txt", sep = '\t', col.names = T, quote = F)
+```
+
+```{r,fig.height=5, fig.width=12}
+p0 <- theme_test() + 
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.text = element_text(size = 12)
+  )
+
+p1 <-
+  DimPlot(
+    object = tiss,
+    group.by = "CellType",
+    label = T,
+    repel = T,
+    reduction = "umap"
+  ) +
+  ggtitle("Map4k4 cKO") + 
+  scale_colour_discrete(breaks = names(table(tiss@meta.data[, "CellType"])),
+                        labels = paste0(names(table(tiss@meta.data[, "CellType"])), " (", table(tiss@meta.data[, "CellType"]), ")")) +
+  p0 + NoLegend()
+
+p2 <-
+  DimPlot(
+    object = tiss,
+    group.by = "CellType",
+    label = T,
+    repel = T,
+    reduction = "tsne"
+  ) +
+  ggtitle("Map4k4 cKO") + 
+  scale_colour_discrete(breaks = names(table(tiss@meta.data[, "CellType"])),
+                        labels = paste0(names(table(tiss@meta.data[, "CellType"])), " (", table(tiss@meta.data[, "CellType"]), ")")) +
+  p0
+
+
+p3 <-
+  DimPlot(
+    object = tiss,
+    group.by = "group",
+    label = T,
+    repel = T,
+    reduction = "umap"
+  ) +
+  ggtitle("Map4k4 cKO") + 
+  scale_colour_discrete(breaks = names(table(tiss@meta.data[, "CellType"])),
+                        labels = paste0(names(table(tiss@meta.data[, "CellType"])), " (", table(tiss@meta.data[, "CellType"]), ")")) +
+  p0
+p1 + p3
+
+DimPlot(tiss, reduction = "umap", split.by = "group", label = T)
+```
+
+
+
+```{r}
+genes_all_filter = list(HSPC = HSPC_genes,
+                 `HSC/MPP` = HSC_MPP_genes,
+                 MEP = MEP_genes,
+                 Pro_erythroblast = Pro_erythroblast,
+
+                 GMP = GMP_genes,
+                 Pro_neutrophil = Pro_neutrophil,
+                 Neutrophil = Neutrophil,
+                 Pro_monocyte = Pro_monocyte,
+                 Macrophage = Macrophage,
+                 Microglial = Microglial,
+                 Eosinophil = Eosinophil,
+                 
+                 Pro_B = Pro_B,
+                 B_cell = B_cell,
+                 T_cell = T_cell,
+                 NK = NK,
+                 cDC = cDC
+                 )
+
+```
+
+
+
+```{r,fig.height=12,fig.width=8}
+Idents(tiss) <- tiss$CellType
+unique( tiss$CellType)
+cluster_fac <- c("HSPC", "HSC/MPP", "MEP", "Pro_ery", "GMP", "Pro_neu", "Neutrophil", "Pro_mon", "Macrophage", "Microglial", "Eosinophil", "Pro_B", "B", "NK/T", "cDc")
+
+pdf(file = "/mnt/raid66/Personal_data/zhangdan/MAP4K4/01cellanno/analysis/markergene_dotplot.pdf", width = 8, height = 12)
+my_dotplot(celltype = genes_all_filter, seurat_obj = tiss,cluster_fac)
+dev.off()
+
+```
+
+
+
+# Check Map4k4 cKO
+```{r}
+grep("Map4k4", rownames(tiss@assays$RNA@counts))
+exp_table <- data.frame(gene_exp = tiss@assays$RNA@data["Map4k4",], tiss@meta.data$group, celltype = tiss@meta.data$CellType)
+
+ggplot(data = exp_table,aes(x = tiss.meta.data.group, y = gene_exp, color = tiss.meta.data.group )) + 
+  geom_violin() + 
+  geom_boxplot(width=0.1) + stat_summary(fun.data=mean_sdl, mult=1, 
+                 geom="pointrange", color="red")
+
+
+mycomparision = c("Control", "Map4k4_cKO")
+p_map4k4 <- ggplot(exp_table, aes(x=tiss.meta.data.group, y=gene_exp,fill=tiss.meta.data.group)) + 
+  geom_violin(trim=FALSE,color="white") + #绘制小提琴图, “color=”设置小提琴图的轮廓线的颜色(以下设为背景为白色，其实表示不要轮廓线)
+  #"trim"如果为TRUE(默认值),则将小提琴的尾部修剪到数据范围。如果为FALSE,不修剪尾部。
+  geom_boxplot(width=0.1,position=position_dodge(0.9))+ #绘制箱线图
+  scale_fill_manual(values = c("#56B4E9", "#E69F00"))+ #设置填充的颜色
+  theme_bw()+ #背景变为白色 + 
+  stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1),
+               colour = "white") + guides(fill = FALSE) +
+  #stat_compare_means(method = 'wilcox.test', comparisons = mycomparision) + 
+  theme(axis.text.x=element_text(angle=15,hjust = 1,colour="black",family="Times",size=20), #设置x轴刻度标签的字体显示倾斜角度为15度，并向下调整1(hjust = 1)，字体簇为Times大小为20
+        axis.text.y=element_text(family="Times",size=16,face="plain"), #设置y轴刻度标签的字体簇，字体大小，字体样式为plain
+        axis.title.y=element_text(family="Times",size = 20,face="plain"), #设置y轴标题的字体属性
+        panel.border = element_blank(),axis.line = element_line(colour = "black",size=1), #去除默认填充的灰色，并将x=0轴和y=0轴加粗显示(size=1)
+        legend.text=element_text(face="italic", family="Times", colour="black",  #设置图例的子标题的字体属性
+                                 size=16),
+        legend.title=element_text(face="italic", family="Times", colour="black", #设置图例的总标题的字体属性
+                                  size=18),
+        panel.grid.major = element_blank(),   #不显示网格线
+        panel.grid.minor = element_blank())+  #不显示网格线
+  ylab("Value")+xlab("") #设置x轴和y轴的标题 
+
+
+FeaturePlot(tiss, features = c("Map4k4"), split.by = "group")
+p_map4k4
+```
+
+
+
+
+
+
+
+
